@@ -6,6 +6,12 @@ from mmdet.models.builder import HEADS
 from mmdet.models.utils import build_linear_layer
 from .bbox_head import BBoxHead
 
+@HEADS.register_module()
+class ConvFCBBoxHead_with_LGF(BBoxHead):
+    r"""This is the self modified bbox head to achieve my previous impl of
+    merged local global features.
+    """
+
 
 @HEADS.register_module()
 class ConvFCBBoxHead(BBoxHead):
