@@ -1,12 +1,14 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import mmcv
 import numpy as np
 import torch
 import torch.nn as nn
-from mmcv.runner import ModuleList
-
+from mmcv.cnn import ConvModule
+from mmcv.runner import BaseModule, ModuleList
 from mmdet.core import (bbox2result, bbox2roi, bbox_mapping, build_assigner,
                         build_sampler, merge_aug_bboxes, merge_aug_masks,
                         multiclass_nms)
+
 from ..builder import HEADS, build_head, build_roi_extractor
 from .base_roi_head import BaseRoIHead
 from .test_mixins import BBoxTestMixin, MaskTestMixin
@@ -130,22 +132,26 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                 outs = outs + (mask_results['mask_pred'], )
         return outs
 
-    def _bbox_forward(self, stage, x, rois):
+    def _bbox_forward(self, stage, x, rois, num_rois_per_img):
         """Box head forward function used in both training and testing."""
         bbox_roi_extractor = self.bbox_roi_extractor[stage]
         bbox_head = self.bbox_head[stage]
-        print(bbox_roi_extractor.num_inputs)
         bbox_feats = bbox_roi_extractor(x[:bbox_roi_extractor.num_inputs],
                                         rois)
-        print("roi shape", rois.shape)
-        print("len bbox feats", len(bbox_feats))
-        print("bbox feats 0, shape", bbox_feats[0].shape)
-        print("bbox feats shape", bbox_feats.shape)
-        print("feature pyramid num", len(x))
-        print("feature pyramid type", type(x))
-        print("feature pyramid shape each", x[0].shape, x[1].shape)
+        # print("roi typs", type(rois))
+        # print("roi length", len(rois))
+        # print("rois shape", rois.shape)
+        # for i in range(len(rois)):
+        #     print(rois[i])
+        # print("len bbox feats", len(bbox_feats))
+        # print("bbox feats shape", bbox_feats.shape)
+        # print("bbox feats 0, shape", bbox_feats[0].shape)
+        # print("bbox feats shape", bbox_feats.shape)
+        # print("feature pyramid num", len(x))
+        # print("feature pyramid type", type(x))
+        # print("feature pyramid shape each", x[0].shape, x[1].shape)
         # do not support caffe_c4 model anymore
-        bbox_feats = self.localglobal_merger(x, bbox_feats)
+        bbox_feats = self.localglobal_merger(x, bbox_feats, num_rois_per_img)
         cls_score, bbox_pred = bbox_head(bbox_feats)
 
         bbox_results = dict(
@@ -156,7 +162,9 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                             gt_labels, rcnn_train_cfg):
         """Run forward function and calculate loss for box head in training."""
         rois = bbox2roi([res.bboxes for res in sampling_results])
-        bbox_results = self._bbox_forward(stage, x, rois)
+        num_rois_per_img = tuple(
+            len(res.bboxes) for res in sampling_results)
+        bbox_results = self._bbox_forward(stage, x, rois, num_rois_per_img)
         bbox_targets = self.bbox_head[stage].get_targets(
             sampling_results, gt_bboxes, gt_labels, rcnn_train_cfg)
         loss_bbox = self.bbox_head[stage].loss(bbox_results['cls_score'],
@@ -644,25 +652,40 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
             return det_bboxes, det_labels, segm_results
 
 @HEADS.register_module()
-class LocalGlobal_Merger(nn.Module):
+class LocalGlobal_Context_Fuser(nn.Module):
     r'''
     This is used to merge the local roi feat with global feature maps.
     It will first, handle the 
     '''
-    def __init__(self, in_channel=256, out_channel=256, roi_size=7) -> None:
+    def __init__(self, 
+                 channels=256, 
+                 roi_size=7,
+                 reduced_channels=None,
+                 lg_merge_layer=None) -> None:
         r'''
-        in_channel should equal to backbone channel.
+        channels should equal to backbone channel.
+        if reduced_channels = None:
+            output_channel = 2*channel
         '''
-        super(LocalGlobal_Merger, self).__init__()
+        super(LocalGlobal_Context_Fuser, self).__init__()
         
         self.adaptive_pool = nn.AdaptiveAvgPool2d(roi_size)
         self.conv_layer = nn.Sequential(
-            nn.Conv2d(in_channel*5, out_channel, 3, 1, 1),
-            nn.Conv2d(out_channel, out_channel,3, 1, 1),
-            nn.Conv2d(out_channel, out_channel,3, 1, 1)
-        )
+            nn.Conv2d(channels*5, channels, 3, 1, 1),
+            nn.Conv2d(channels, channels,3, 1, 1),
+            nn.Conv2d(channels, channels,3, 1, 1))
+        
+        fuse_module = ModuleList()
+        fuse_module.append(nn.Identity())
+        if reduced_channels:
+            fuse_module.append(
+                nn.Conv2d(2*channels, reduced_channels, 1))
+        if lg_merge_layer:
+            fuse_module.append(
+                build_head(lg_merge_layer))
+        self.fuse_layer = nn.Sequential(*fuse_module)
 
-    def forward(self, fp, roi_feats):
+    def forward(self, fp, roi_feats, num_rois_per_img):
         r'''input is feature pyramid'''
         pooled_fp = []
         for i in range(len(fp)):
@@ -670,7 +693,74 @@ class LocalGlobal_Merger(nn.Module):
         
         pooled_fp = torch.cat(pooled_fp, dim=1)
         pooled_fp = self.conv_layer(pooled_fp)
-        print(pooled_fp.shape)
-        print(roi_feats.shape)
-        return pooled_fp
+
+        roi_feats = roi_feats.split(num_rois_per_img, 0)
+
+        img_num = len(num_rois_per_img)
+
+        lg_roi_feats = []
+        for i in range(img_num):
+            img_pooled_fp = pooled_fp[i].unsqueeze(0)
+            img_roi_feats = roi_feats[i]
+            for j in range(len(img_roi_feats)):
+                img_roi_feat = img_roi_feats[j].unsqueeze(0)
+                lg_roi_feats.append(
+                    torch.cat((img_roi_feat, img_pooled_fp), dim=1))
+
+        lg_roi_feats = torch.cat(lg_roi_feats, dim=0)
+        lg_roi_feats = self.fuse_layer(lg_roi_feats)        
+        return lg_roi_feats
         
+
+@HEADS.register_module()
+class SELayer(BaseModule):
+    """Squeeze-and-Excitation Module.
+
+    Args:
+        channels (int): The input (and output) channels of the SE layer.
+        ratio (int): Squeeze ratio in SELayer, the intermediate channel will be
+            ``int(channels/ratio)``. Default: 16.
+        conv_cfg (None or dict): Config dict for convolution layer.
+            Default: None, which means using conv2d.
+        act_cfg (dict or Sequence[dict]): Config dict for activation layer.
+            If act_cfg is a dict, two activation layers will be configurated
+            by this dict. If act_cfg is a sequence of dicts, the first
+            activation layer will be configurated by the first dict and the
+            second activation layer will be configurated by the second dict.
+            Default: (dict(type='ReLU'), dict(type='Sigmoid'))
+        init_cfg (dict or list[dict], optional): Initialization config dict.
+            Default: None
+    """
+
+    def __init__(self,
+                 channels,
+                 ratio=16,
+                 conv_cfg=None,
+                 act_cfg=(dict(type='ReLU'), dict(type='Sigmoid')),
+                 init_cfg=None):
+        super(SELayer, self).__init__(init_cfg)
+        if isinstance(act_cfg, dict):
+            act_cfg = (act_cfg, act_cfg)
+        assert len(act_cfg) == 2
+        assert mmcv.is_tuple_of(act_cfg, dict)
+        self.global_avgpool = nn.AdaptiveAvgPool2d(1)
+        self.conv1 = ConvModule(
+            in_channels=channels,
+            out_channels=int(channels / ratio),
+            kernel_size=1,
+            stride=1,
+            conv_cfg=conv_cfg,
+            act_cfg=act_cfg[0])
+        self.conv2 = ConvModule(
+            in_channels=int(channels / ratio),
+            out_channels=channels,
+            kernel_size=1,
+            stride=1,
+            conv_cfg=conv_cfg,
+            act_cfg=act_cfg[1])
+
+    def forward(self, x):
+        out = self.global_avgpool(x)
+        out = self.conv1(out)
+        out = self.conv2(out)
+        return x * out

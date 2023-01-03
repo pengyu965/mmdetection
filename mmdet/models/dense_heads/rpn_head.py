@@ -65,7 +65,6 @@ class RPNHead(AnchorHead):
         x = F.relu(x, inplace=False)
         rpn_cls_score = self.rpn_cls(x)
         rpn_bbox_pred = self.rpn_reg(x)
-        print("rpn shape,", rpn_cls_score.shape, rpn_bbox_pred.shape)
         return rpn_cls_score, rpn_bbox_pred
 
     def loss(self,
@@ -232,7 +231,6 @@ class RPNHead(AnchorHead):
             dets, _ = batched_nms(proposals, scores, ids, cfg.nms)
         else:
             return proposals.new_zeros(0, 5)
-
         return dets[:cfg.max_per_img]
 
     def onnx_export(self, x, img_metas):
