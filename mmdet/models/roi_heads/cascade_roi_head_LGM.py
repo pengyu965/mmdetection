@@ -121,7 +121,8 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
         rois = bbox2roi([proposals])
         if self.with_bbox:
             for i in range(self.num_stages):
-                bbox_results = self._bbox_forward(i, x, rois)
+                bbox_results = self._bbox_forward(
+                    i, x, rois, [len(proposals)])
                 outs = outs + (bbox_results['cls_score'],
                                bbox_results['bbox_pred'])
         # mask heads
@@ -361,13 +362,14 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
             return results
 
         for i in range(self.num_stages):
-            bbox_results = self._bbox_forward(i, x, rois)
+            num_proposals_per_img = tuple(
+                len(proposals) for proposals in proposal_list)
+            bbox_results = self._bbox_forward(
+                i, x, rois, num_proposals_per_img)
 
             # split batch bbox prediction back to each image
             cls_score = bbox_results['cls_score']
             bbox_pred = bbox_results['bbox_pred']
-            num_proposals_per_img = tuple(
-                len(proposals) for proposals in proposal_list)
             rois = rois.split(num_proposals_per_img, 0)
             cls_score = cls_score.split(num_proposals_per_img, 0)
             if isinstance(bbox_pred, torch.Tensor):
@@ -506,7 +508,8 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                 continue
 
             for i in range(self.num_stages):
-                bbox_results = self._bbox_forward(i, x, rois)
+                bbox_results = self._bbox_forward(
+                    i, x, rois, [len(proposals)])
                 ms_scores.append(bbox_results['cls_score'])
 
                 if i < self.num_stages - 1:
@@ -599,7 +602,8 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
         rcnn_test_cfg = self.test_cfg
 
         for i in range(self.num_stages):
-            bbox_results = self._bbox_forward(i, x, rois)
+            bbox_results = self._bbox_forward(
+                i, x, rois, num_proposals_per_img)
 
             cls_score = bbox_results['cls_score']
             bbox_pred = bbox_results['bbox_pred']
