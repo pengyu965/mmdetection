@@ -45,10 +45,13 @@ model = dict(
             out_channels=256,
             featmap_strides=[4, 8, 16, 32]),
         localglobal_merger=dict(
-            type='LocalGlobal_Merger',
-            in_channel=256,
-            out_channel=256,
-            roi_size=7),
+            type='LocalGlobal_Context_Fuser',
+            channels=256,
+            roi_size=7,
+            reduced_channels=256,
+            lg_merge_layer=dict(
+                type="SELayer",
+                channels=256)),
         bbox_head=[
             dict(
                 type='Shared2FCBBoxHead',
@@ -243,8 +246,8 @@ data = dict(
     train=dict(
         type=dataset_type,
         classes=classes,
-        ann_file='/home/pengyu/Workspace/data/chart_data/pmc_2022/pmc_coco/element_detection/val.json',
-        img_prefix='/home/pengyu/Workspace/data/chart_data/pmc_2022/pmc_coco/element_detection/val/',
+        ann_file='/home/pengyu/Workspace/data/chart_data/pmc_2022/pmc_coco/element_detection/train.json',
+        img_prefix='/home/pengyu/Workspace/data/chart_data/pmc_2022/pmc_coco/element_detection/train/',
         pipeline=train_pipeline),
     val=dict(
         type=dataset_type,
@@ -270,7 +273,7 @@ lr_config = dict(
     warmup_iters=500,
     warmup_ratio=0.001,
     step=[8, 11])
-runner = dict(type='EpochBasedRunner', max_epochs=1)
+runner = dict(type='EpochBasedRunner', max_epochs=20)
 
 
 checkpoint_config = dict(interval=1)
