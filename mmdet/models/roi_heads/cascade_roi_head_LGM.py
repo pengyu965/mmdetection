@@ -152,8 +152,7 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
             norm_proposals = torch.matmul(proposals, img_shape)
             norm_proposals_l.append(norm_proposals)
 
-        norm_rois = torch.stack(norm_proposals_l, dim=0)
-        return norm_rois
+        return norm_proposals_l
 
     def _bbox_forward(self, stage, x, rois, num_rois_per_img, image_shapes):
         """Box head forward function used in both training and testing."""
@@ -185,11 +184,12 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
         #     norm_roi = norm_roi[:,1:]/norm_roi[:,1:].max()
         #     norm_rois.append(norm_roi)
         # norm_rois = torch.stack(norm_rois, dim=0)
-        norm_rois = self._rois_norm(rois, image_shapes, num_rois_per_img)
+        norm_rois_l = self._rois_norm(rois, image_shapes, num_rois_per_img)
 
-        bbox_encoding = bbox_encoder(norm_rois)
-        bbox_encoding = bbox_encoding.view(-1, bbox_encoding.size(-1))
-        
+        bbox_encoding_l = bbox_encoder(norm_rois_l)
+        bbox_encoding = torch.cat(bbox_encoding_l, dim=0)
+        # bbox_encoding = bbox_encoding.view(-1, bbox_encoding.size(-1))
+
         cls_score, bbox_pred = bbox_head(bbox_feats, bbox_encoding)
 
         bbox_results = dict(

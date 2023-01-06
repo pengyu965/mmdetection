@@ -148,29 +148,32 @@ class BboxEncoder(nn.Module):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
 
-    def forward(self, x):
-        b, bbox_num, bbox_dim = x.size()
+    def forward(self, xs):
+        out = []
+        for x in xs:
+            bbox_num, bbox_dim = x.size()
 
-        assert bbox_num <= self.block_size, "Cannot forward, model block size is exhausted."
+            assert bbox_num <= self.block_size, "Cannot forward, model block size is exhausted."
 
-        # if x.is_cuda:
-        #     device = x.get_device()
-        # else:
-        #     device = 'cpu'
+            # if x.is_cuda:
+            #     device = x.get_device()
+            # else:
+            #     device = 'cpu'
 
-        # if bbox_num >= self.block_size:
-        #     x = x[:,:self.block_size,:]
-        # else:
-            # zero_cat = torch.Tensor(
-            #     np.zeros([b,self.block_size-bbox_num,bbox_dim]), 
-            #     dtype=np.float32, 
-            #     device=device)
-            # x = torch.cat((x,zero_cat),dim=1)
-        # forward the GPT model
-        bbox_repr = self.bbox_embedding(x)
-        #bbox_repr --> [b, box_num, 512]
-        x = self.blocks(bbox_repr)
-        x = self.ln_f(x)
-        logits = self.head(x)
-
-        return logits
+            # if bbox_num >= self.block_size:
+            #     x = x[:,:self.block_size,:]
+            # else:
+                # zero_cat = torch.Tensor(
+                #     np.zeros([b,self.block_size-bbox_num,bbox_dim]), 
+                #     dtype=np.float32, 
+                #     device=device)
+                # x = torch.cat((x,zero_cat),dim=1)
+            # forward the GPT model
+            x = x.unsqueeze(0)
+            bbox_repr = self.bbox_embedding(x)
+            #bbox_repr --> [b, box_num, 512]
+            x = self.blocks(bbox_repr)
+            x = self.ln_f(x)
+            logits = self.head(x)
+            out.append(logits.squeeze(0))
+        return out
