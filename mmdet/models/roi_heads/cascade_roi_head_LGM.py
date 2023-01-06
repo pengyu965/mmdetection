@@ -29,6 +29,7 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                  mask_roi_extractor=None,
                  mask_head=None,
                  localglobal_merger=None,
+                 bbox_encoder = None,
                  shared_head=None,
                  train_cfg=None,
                  test_cfg=None,
@@ -52,7 +53,12 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
             pretrained=pretrained,
             init_cfg=init_cfg)
         
-        self.localglobal_merger = build_head(localglobal_merger)
+        self.localglobal_fuser = build_head(localglobal_merger)
+        self.bbox_encoder = ModuleList()
+        bbox_encoders = [bbox_encoder for _ in range(num_stages)]
+        for bbox_encoder in bbox_encoders:
+            self.bbox_encoder.append(build_head(bbox_encoder))
+    
 
     def init_bbox_head(self, bbox_roi_extractor, bbox_head):
         """Initialize box head and box roi extractor.
@@ -133,10 +139,27 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                 outs = outs + (mask_results['mask_pred'], )
         return outs
 
-    def _bbox_forward(self, stage, x, rois, num_rois_per_img):
+    def _rois_norm(self, rois, image_shapes, num_rois_per_img):
+        proposals_l = rois.split(num_rois_per_img,0)
+        norm_proposals_l = []
+        for i in range(len(proposals_l)):
+            h, w, _ = image_shapes[i]
+            proposals = proposals_l[i][:,1:]
+            img_shape = torch.diag(
+                torch.tensor([1/w, 1/h, 1/w, 1/h], 
+                dtype=torch.float32, 
+                device = proposals.device))
+            norm_proposals = torch.matmul(proposals, img_shape)
+            norm_proposals_l.append(norm_proposals)
+
+        norm_rois = torch.stack(norm_proposals_l, dim=0)
+        return norm_rois
+
+    def _bbox_forward(self, stage, x, rois, num_rois_per_img, image_shapes):
         """Box head forward function used in both training and testing."""
         bbox_roi_extractor = self.bbox_roi_extractor[stage]
         bbox_head = self.bbox_head[stage]
+        bbox_encoder = self.bbox_encoder[stage]
         bbox_feats = bbox_roi_extractor(x[:bbox_roi_extractor.num_inputs],
                                         rois)
         # print("roi typs", type(rois))
@@ -152,20 +175,36 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
         # print("feature pyramid type", type(x))
         # print("feature pyramid shape each", x[0].shape, x[1].shape)
         # do not support caffe_c4 model anymore
-        bbox_feats = self.localglobal_merger(x, bbox_feats, num_rois_per_img)
-        cls_score, bbox_pred = bbox_head(bbox_feats)
+        bbox_feats = self.localglobal_fuser(x, bbox_feats, num_rois_per_img)
+        # norm_rois = self._rois_norm(rois,image_shapes,num_rois_per_img)
+
+        # split_rois = rois.split(num_rois_per_img,0)
+        # norm_rois = []
+        # for norm_roi in split_rois:
+        #     norm_roi = norm_roi.detach()
+        #     norm_roi = norm_roi[:,1:]/norm_roi[:,1:].max()
+        #     norm_rois.append(norm_roi)
+        # norm_rois = torch.stack(norm_rois, dim=0)
+        norm_rois = self._rois_norm(rois, image_shapes, num_rois_per_img)
+
+        bbox_encoding = bbox_encoder(norm_rois)
+        bbox_encoding = bbox_encoding.view(-1, bbox_encoding.size(-1))
+        
+        cls_score, bbox_pred = bbox_head(bbox_feats, bbox_encoding)
 
         bbox_results = dict(
             cls_score=cls_score, bbox_pred=bbox_pred, bbox_feats=bbox_feats)
         return bbox_results
 
     def _bbox_forward_train(self, stage, x, sampling_results, gt_bboxes,
-                            gt_labels, rcnn_train_cfg):
+                            gt_labels, rcnn_train_cfg, img_metas):
         """Run forward function and calculate loss for box head in training."""
         rois = bbox2roi([res.bboxes for res in sampling_results])
+        img_shapes = tuple(meta['img_shape'] for meta in img_metas)
         num_rois_per_img = tuple(
             len(res.bboxes) for res in sampling_results)
-        bbox_results = self._bbox_forward(stage, x, rois, num_rois_per_img)
+        bbox_results = self._bbox_forward(
+            stage, x, rois, num_rois_per_img, img_shapes)
         bbox_targets = self.bbox_head[stage].get_targets(
             sampling_results, gt_bboxes, gt_labels, rcnn_train_cfg)
         loss_bbox = self.bbox_head[stage].loss(bbox_results['cls_score'],
@@ -268,7 +307,7 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
             # bbox head forward and loss
             bbox_results = self._bbox_forward_train(i, x, sampling_results,
                                                     gt_bboxes, gt_labels,
-                                                    rcnn_train_cfg)
+                                                    rcnn_train_cfg, img_metas)
 
             for name, value in bbox_results['loss_bbox'].items():
                 losses[f's{i}.{name}'] = (
@@ -365,7 +404,7 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
             num_proposals_per_img = tuple(
                 len(proposals) for proposals in proposal_list)
             bbox_results = self._bbox_forward(
-                i, x, rois, num_proposals_per_img)
+                i, x, rois, num_proposals_per_img, img_shapes)
 
             # split batch bbox prediction back to each image
             cls_score = bbox_results['cls_score']
@@ -509,7 +548,7 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
 
             for i in range(self.num_stages):
                 bbox_results = self._bbox_forward(
-                    i, x, rois, [len(proposals)])
+                    i, x, rois, [len(proposals)], (img_shape))
                 ms_scores.append(bbox_results['cls_score'])
 
                 if i < self.num_stages - 1:

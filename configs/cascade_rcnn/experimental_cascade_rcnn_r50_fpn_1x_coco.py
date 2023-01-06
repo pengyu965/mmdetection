@@ -52,11 +52,22 @@ model = dict(
             lg_merge_layer=dict(
                 type="SELayer",
                 channels=256)),
+        bbox_encoder=dict(
+            type='BboxEncoder',
+            n_layer=12,
+            n_head=8,
+            n_embd=512,
+            bbox_cord_dim=4,
+            bbox_max_num=512,
+            embd_pdrop=0.1,
+            attn_pdrop=0.1,
+            resid_pdrop=0.1),
         bbox_head=[
             dict(
-                type='Shared2FCBBoxHead',
+                type='Shared3FCBBoxHead_LGContext',
                 in_channels=256,
                 fc_out_channels=1024,
+                bbox_encoding_dim=512,
                 roi_feat_size=7,
                 num_classes=18,
                 bbox_coder=dict(
@@ -71,9 +82,10 @@ model = dict(
                 loss_bbox=dict(type='SmoothL1Loss', beta=1.0,
                                loss_weight=1.0)),
             dict(
-                type='Shared2FCBBoxHead',
+                type='Shared3FCBBoxHead_LGContext',
                 in_channels=256,
                 fc_out_channels=1024,
+                bbox_encoding_dim=512,
                 roi_feat_size=7,
                 num_classes=18,
                 bbox_coder=dict(
@@ -88,9 +100,10 @@ model = dict(
                 loss_bbox=dict(type='SmoothL1Loss', beta=1.0,
                                loss_weight=1.0)),
             dict(
-                type='Shared2FCBBoxHead',
+                type='Shared3FCBBoxHead_LGContext',
                 in_channels=256,
                 fc_out_channels=1024,
+                bbox_encoding_dim=512,
                 roi_feat_size=7,
                 num_classes=18,
                 bbox_coder=dict(
@@ -181,7 +194,7 @@ model = dict(
     test_cfg=dict(
         rpn=dict(
             nms_pre=1000,
-            max_per_img=1000,
+            max_per_img=512,
             nms=dict(type='nms', iou_threshold=0.7),
             min_bbox_size=0),
         rcnn=dict(
@@ -246,8 +259,8 @@ data = dict(
     train=dict(
         type=dataset_type,
         classes=classes,
-        ann_file='/home/pengyu/Workspace/data/chart_data/pmc_2022/pmc_coco/element_detection/train.json',
-        img_prefix='/home/pengyu/Workspace/data/chart_data/pmc_2022/pmc_coco/element_detection/train/',
+        ann_file='/home/pengyu/Workspace/data/chart_data/pmc_2022/pmc_coco/element_detection/val.json',
+        img_prefix='/home/pengyu/Workspace/data/chart_data/pmc_2022/pmc_coco/element_detection/val/',
         pipeline=train_pipeline),
     val=dict(
         type=dataset_type,

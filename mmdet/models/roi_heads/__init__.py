@@ -25,6 +25,7 @@ from .trident_roi_head import TridentRoIHead
 
 from .cascade_roi_head_LGM import (CascadeRoIHead_LGM, 
                                    LocalGlobal_Context_Fuser, SELayer)
+from .bbox_encoding_transformer import BboxEncoder
 
 __all__ = [
     'BaseRoIHead', 'CascadeRoIHead', 'DoubleHeadRoIHead', 'MaskScoringRoIHead',
@@ -37,5 +38,5 @@ __all__ = [
     'CoarseMaskHead', 'DynamicRoIHead', 'SparseRoIHead', 'TridentRoIHead',
     'SCNetRoIHead', 'SCNetMaskHead', 'SCNetSemanticHead', 'SCNetBBoxHead',
     'FeatureRelayHead', 'GlobalContextHead', 'CascadeRoIHead_LGM', 
-    "LocalGlobal_Context_Fuser", "SELayer"
+    "LocalGlobal_Context_Fuser", "SELayer", "BboxEncoder"
 ]
