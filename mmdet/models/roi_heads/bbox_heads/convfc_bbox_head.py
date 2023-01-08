@@ -155,7 +155,6 @@ class ConvFCBBoxHead(BBoxHead):
             if (is_shared
                     or self.num_shared_fcs == 0) and not self.with_avg_pool:
                 last_layer_dim *= self.roi_feat_area
-                last_layer_dim += 490
             for i in range(num_branch_fcs):
                 fc_in_channels = (
                     last_layer_dim if i == 0 else self.fc_out_channels)
