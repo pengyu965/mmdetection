@@ -29,6 +29,7 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                  mask_roi_extractor=None,
                  mask_head=None,
                  localglobal_fuser=None,
+                 lgf_shared=True,
                  bbox_encoder = None,
                  bbox_encoder_shared = False,
                  shared_head=None,
@@ -54,13 +55,19 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
             pretrained=pretrained,
             init_cfg=init_cfg)
         
-        self.localglobal_fuser = build_head(localglobal_fuser)
+
+        if lgf_shared:
+            self.localglobal_fuser = build_head(localglobal_fuser)
+        else:
+            self.localglobal_fuser = ModuleList()
+            localglobal_fuser_cfgs = [
+                localglobal_fuser for _ in range(num_stages)]
+            for lgf_cfg in localglobal_fuser_cfgs:
+                self.localglobal_fuser.append(build_head(lgf_cfg))
 
         if bbox_encoder:
             if bbox_encoder_shared:
-                bbox_encoder = build_head(bbox_encoder)
-                for i in range(num_stages):
-                    self.bbox_encoder.append(bbox_encoder)
+                self.bbox_encoder = build_head(bbox_encoder)
             else:
                 self.bbox_encoder = ModuleList()
                 bbox_encoders = [bbox_encoder for _ in range(num_stages)]
@@ -183,7 +190,13 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
         # print("feature pyramid type", type(x))
         # print("feature pyramid shape each", x[0].shape, x[1].shape)
         # do not support caffe_c4 model anymore
-        bbox_feats = self.localglobal_fuser(x, bbox_feats, num_rois_per_img)
+
+        # Handling shared or not shared LGF through different stage
+        if isinstance(self.localglobal_fuser, ModuleList):
+            localglobal_fuser = self.localglobal_fuser[stage]
+        else:
+            localglobal_fuser = self.localglobal_fuser
+        bbox_feats = localglobal_fuser(x, bbox_feats, num_rois_per_img)
         # norm_rois = self._rois_norm(rois,image_shapes,num_rois_per_img)
 
         # split_rois = rois.split(num_rois_per_img,0)
@@ -194,7 +207,12 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
         #     norm_rois.append(norm_roi)
         # norm_rois = torch.stack(norm_rois, dim=0)
         if self.bbox_encoder:
-            bbox_encoder = self.bbox_encoder[stage]
+            # Handling shared or not shared bbox encoder 
+            # through different stage
+            if isinstance(self.bbox_encoder, ModuleList):
+                bbox_encoder = self.bbox_encoder[stage]
+            else:
+                bbox_encoder = self.bbox_encoder
             norm_rois_l = self._rois_norm(rois, image_shapes, num_rois_per_img)
 
             bbox_encoding_l = bbox_encoder(norm_rois_l)
