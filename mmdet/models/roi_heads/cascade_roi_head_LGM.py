@@ -28,7 +28,7 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                  bbox_head=None,
                  mask_roi_extractor=None,
                  mask_head=None,
-                 localglobal_merger=None,
+                 localglobal_fuser=None,
                  bbox_encoder = None,
                  bbox_encoder_shared = False,
                  shared_head=None,
@@ -54,7 +54,7 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
             pretrained=pretrained,
             init_cfg=init_cfg)
         
-        self.localglobal_fuser = build_head(localglobal_merger)
+        self.localglobal_fuser = build_head(localglobal_fuser)
 
         if bbox_encoder:
             if bbox_encoder_shared:

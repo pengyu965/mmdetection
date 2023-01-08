@@ -44,7 +44,7 @@ model = dict(
             roi_layer=dict(type='RoIAlign', output_size=7, sampling_ratio=0),
             out_channels=256,
             featmap_strides=[4, 8, 16, 32]),
-        localglobal_merger=dict(
+        localglobal_fuser=dict(
             type='LocalGlobal_Context_Fuser',
             channels=256,
             roi_size=7,
