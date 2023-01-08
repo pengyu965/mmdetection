@@ -30,6 +30,7 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                  mask_head=None,
                  localglobal_merger=None,
                  bbox_encoder = None,
+                 bbox_encoder_shared = False,
                  shared_head=None,
                  train_cfg=None,
                  test_cfg=None,
@@ -54,10 +55,19 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
             init_cfg=init_cfg)
         
         self.localglobal_fuser = build_head(localglobal_merger)
-        self.bbox_encoder = ModuleList()
-        bbox_encoders = [bbox_encoder for _ in range(num_stages)]
-        for bbox_encoder in bbox_encoders:
-            self.bbox_encoder.append(build_head(bbox_encoder))
+
+        if bbox_encoder:
+            if bbox_encoder_shared:
+                bbox_encoder = build_head(bbox_encoder)
+                for i in range(num_stages):
+                    self.bbox_encoder.append(bbox_encoder)
+            else:
+                self.bbox_encoder = ModuleList()
+                bbox_encoders = [bbox_encoder for _ in range(num_stages)]
+                for bbox_encoder in bbox_encoders:
+                    self.bbox_encoder.append(build_head(bbox_encoder))
+        else:
+            self.bbox_encoder = None
     
 
     def init_bbox_head(self, bbox_roi_extractor, bbox_head):
@@ -158,7 +168,6 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
         """Box head forward function used in both training and testing."""
         bbox_roi_extractor = self.bbox_roi_extractor[stage]
         bbox_head = self.bbox_head[stage]
-        bbox_encoder = self.bbox_encoder[stage]
         bbox_feats = bbox_roi_extractor(x[:bbox_roi_extractor.num_inputs],
                                         rois)
         # print("roi typs", type(rois))
@@ -184,13 +193,16 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
         #     norm_roi = norm_roi[:,1:]/norm_roi[:,1:].max()
         #     norm_rois.append(norm_roi)
         # norm_rois = torch.stack(norm_rois, dim=0)
-        norm_rois_l = self._rois_norm(rois, image_shapes, num_rois_per_img)
+        if self.bbox_encoder:
+            bbox_encoder = self.bbox_encoder[stage]
+            norm_rois_l = self._rois_norm(rois, image_shapes, num_rois_per_img)
 
-        bbox_encoding_l = bbox_encoder(norm_rois_l)
-        bbox_encoding = torch.cat(bbox_encoding_l, dim=0)
+            bbox_encoding_l = bbox_encoder(norm_rois_l)
+            bbox_encoding = torch.cat(bbox_encoding_l, dim=0)
+            cls_score, bbox_pred = bbox_head(bbox_feats, bbox_encoding)
         # bbox_encoding = bbox_encoding.view(-1, bbox_encoding.size(-1))
-
-        cls_score, bbox_pred = bbox_head(bbox_feats, bbox_encoding)
+        else:
+            cls_score, bbox_pred = bbox_head(bbox_feats)
 
         bbox_results = dict(
             cls_score=cls_score, bbox_pred=bbox_pred, bbox_feats=bbox_feats)
