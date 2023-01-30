@@ -19,84 +19,6 @@ from ..builder import HEADS
 logger = logging.getLogger(__name__)
 
 
-class CausalSelfAttention(nn.Module):
-    """
-    A vanilla multi-head masked self-attention layer with a projection at the end.
-    It is possible to use torch.nn.MultiheadAttention here but I am including an
-    explicit implementation here to show that there is nothing too scary here.
-    """
-
-    def __init__(self,
-                 n_embd=512,
-                 n_head=8,
-                 block_size=100,
-                 attn_pdrop=0.1,
-                 resid_pdrop=0.1):
-        super().__init__()
-        assert n_embd % n_head == 0
-        # key, query, value projections for all heads
-        self.key = nn.Linear(n_embd, n_embd)
-        self.query = nn.Linear(n_embd, n_embd)
-        self.value = nn.Linear(n_embd, n_embd)
-        # regularization
-        self.attn_drop = nn.Dropout(attn_pdrop)
-        self.resid_drop = nn.Dropout(resid_pdrop)
-        # output projection
-        self.proj = nn.Linear(n_embd, n_embd)
-        # causal mask to ensure that attention is only applied to the left in the input sequence
-        self.register_buffer("mask", torch.tril(torch.ones(block_size, block_size))
-                                     .view(1, 1, block_size, block_size))
-        self.n_head = n_head
-
-    def forward(self, x, layer_past=None):
-        B, T, C = x.size()
-
-        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        k = self.key(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        q = self.query(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        v = self.value(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-
-        # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-        att = att.masked_fill(self.mask[:,:,:T,:T] == 0, float('-inf'))
-        att = F.softmax(att, dim=-1)
-        att = self.attn_drop(att)
-        y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
-
-        # output projection
-        y = self.proj(y)
-        y = self.resid_drop(y)
-        return y
-
-
-class Block(nn.Module):
-    """ an unassuming Transformer block """
-
-    def __init__(self,
-                 n_embd=512,
-                 n_head=8,
-                 block_size=100,
-                 attn_pdrop=0.1,
-                 resid_pdrop=0.1):
-        super().__init__()
-        self.ln1 = nn.LayerNorm(n_embd)
-        self.ln2 = nn.LayerNorm(n_embd)
-        self.attn = CausalSelfAttention(
-            n_embd, n_head, block_size, attn_pdrop, resid_pdrop)
-        self.mlp = nn.Sequential(
-            nn.Linear(n_embd, 4 * n_embd),
-            nn.GELU(),
-            nn.Linear(4 * n_embd, n_embd),
-            nn.Dropout(resid_pdrop),
-        )
-
-    def forward(self, x):
-        x = x + self.attn(self.ln1(x))
-        x = x + self.mlp(self.ln2(x))
-        return x
-
-
 @HEADS.register_module()
 class BboxEncoder(nn.Module):
     """  the full GPT language model, with a context size of block_size """
@@ -106,74 +28,72 @@ class BboxEncoder(nn.Module):
                  n_head=8,
                  n_embd=512,
                  bbox_cord_dim=4,
-                 bbox_max_num=512,
+                 bbox_max_num=1024,
                  embd_pdrop=0.1,
-                 attn_pdrop=0.1,
-                 resid_pdrop=0.1):
+                 attn_pdrop=0.1):
         super(BboxEncoder, self).__init__()
 
         # input embedding stem
         # self.tok_emb = nn.Embedding(vocab_size, n_embd)
         # self.pos_emb = nn.Parameter(torch.zeros(1, block_size, n_embd))
-        self.bbox_embedding = nn.Sequential(
-            nn.Linear(bbox_cord_dim, n_embd),
-            nn.Linear(n_embd, n_embd),
-            nn.Dropout(embd_pdrop)
-            )
+        self.bbox_emb_layer = nn.ModuleList()
+        self.bbox_emb_layer.append(nn.Linear(bbox_cord_dim, n_embd))
+        self.bbox_emb_layer.append(nn.Linear(n_embd, n_embd))
+        self.bbox_emb_layer.append(nn.Dropout(embd_pdrop))
         
         # transformer 
-        self.blocks = nn.Sequential(
-            *[Block(n_embd, n_head, bbox_max_num, 
-                    attn_pdrop, resid_pdrop) for _ in range(n_layer)])
+        transformer_layer=nn.TransformerEncoderLayer(
+            d_model=n_embd,
+            nhead=n_head, 
+            batch_first=True,
+            dropout=attn_pdrop)
 
-        # decoder head
-        self.ln_f = nn.LayerNorm(n_embd)
-        self.head = nn.Linear(n_embd, n_embd, bias=False)
+        self.encoder = nn.TransformerEncoder(
+            transformer_layer,
+            num_layers=n_layer,
+            enable_nested_tensor=True, 
+            mask_check=True)
 
         self.block_size = bbox_max_num
-        self.apply(self._init_weights)
 
         logger.info("number of parameters: %e", 
                     sum(p.numel() for p in self.parameters()))
 
-    def get_block_size(self):
-        return self.block_size
-
-    def _init_weights(self, module):
-        if isinstance(module, (nn.Linear, nn.Embedding)):
-            module.weight.data.normal_(mean=0.0, std=0.02)
-            if isinstance(module, nn.Linear) and module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.LayerNorm):
-            module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
-
     def forward(self, xs):
-        out = []
+        # Forming the batch. Since the length of each rois is not same.
+        masks = []
+        inputs = []
+        bboxnum_per_batch = []
         for x in xs:
             bbox_num, bbox_dim = x.size()
+            assert bbox_num <= self.block_size, \
+                "Cannot forward, model block size is exhausted."
 
-            assert bbox_num <= self.block_size, "Cannot forward, model block size is exhausted."
+            x=x.unsqueeze(0) # (1,bbox_num,4)
 
-            # if x.is_cuda:
-            #     device = x.get_device()
-            # else:
-            #     device = 'cpu'
+            mask = x.new(1,self.block_size).float().zero_()
+            pad = x.new(1,self.block_size-bbox_num, bbox_dim).float().zero_()
 
-            # if bbox_num >= self.block_size:
-            #     x = x[:,:self.block_size,:]
-            # else:
-                # zero_cat = torch.Tensor(
-                #     np.zeros([b,self.block_size-bbox_num,bbox_dim]), 
-                #     dtype=np.float32, 
-                #     device=device)
-                # x = torch.cat((x,zero_cat),dim=1)
-            # forward the GPT model
-            x = x.unsqueeze(0)
-            bbox_repr = self.bbox_embedding(x)
-            #bbox_repr --> [b, box_num, 512]
-            x = self.blocks(bbox_repr)
-            x = self.ln_f(x)
-            logits = self.head(x)
-            out.append(logits.squeeze(0))
+            x = torch.cat((x,pad),dim=1)
+            mask[:,:bbox_num] = 1
+
+            inputs.append(x)
+            masks.append(mask)
+            bboxnum_per_batch.append(bbox_num)
+        
+        input = torch.cat(inputs, dim = 0)
+        mask = torch.cat(masks,dim=0)
+
+        for i, emb_layer in enumerate(self.bbox_emb_layer):
+            input = emb_layer(input)
+            input = input * mask.unsqueeze(-1)
+        
+        # Sending the embedded bbox into transformer.
+        logits = self.encoder(input, src_key_padding_mask=mask.bool())
+
+        out = []
+        for i in range(logits.size(0)):
+            bbox_num = bboxnum_per_batch[i]
+            out.append(logits[i,:bbox_num,:])
+
         return out

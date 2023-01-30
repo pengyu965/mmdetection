@@ -36,7 +36,7 @@ model = dict(
             type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
         loss_bbox=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=1.0)),
     roi_head=dict(
-        type='CascadeRoIHead_LGM',
+        type='CascadeRoIHead_LGF',
         num_stages=3,
         stage_loss_weights=[1, 0.5, 0.25],
         bbox_roi_extractor=dict(
@@ -52,19 +52,20 @@ model = dict(
             lg_merge_layer=dict(
                 type="SELayer",
                 channels=256)),
+        lgf_shared=False,
         bbox_encoder=dict(
             type='BboxEncoder',
-            n_layer=12,
-            n_head=8,
+            n_layer=4,
+            n_head=4,
             n_embd=512,
             bbox_cord_dim=4,
-            bbox_max_num=512,
+            bbox_max_num=1024,
             embd_pdrop=0.1,
-            attn_pdrop=0.1,
-            resid_pdrop=0.1),
+            attn_pdrop=0.1),
+        bbox_encoder_shared = False,
         bbox_head=[
             dict(
-                type='Shared3FCBBoxHead_LGContext',
+                type='Shared3FCBBoxHead_with_BboxEncoding',
                 in_channels=256,
                 fc_out_channels=1024,
                 bbox_encoding_dim=512,
@@ -82,7 +83,7 @@ model = dict(
                 loss_bbox=dict(type='SmoothL1Loss', beta=1.0,
                                loss_weight=1.0)),
             dict(
-                type='Shared3FCBBoxHead_LGContext',
+                type='Shared3FCBBoxHead_with_BboxEncoding',
                 in_channels=256,
                 fc_out_channels=1024,
                 bbox_encoding_dim=512,
@@ -100,7 +101,7 @@ model = dict(
                 loss_bbox=dict(type='SmoothL1Loss', beta=1.0,
                                loss_weight=1.0)),
             dict(
-                type='Shared3FCBBoxHead_LGContext',
+                type='Shared3FCBBoxHead_with_BboxEncoding',
                 in_channels=256,
                 fc_out_channels=1024,
                 bbox_encoding_dim=512,
@@ -259,20 +260,20 @@ data = dict(
     train=dict(
         type=dataset_type,
         classes=classes,
-        ann_file='/home/pengyu/Workspace/data/chart_data/pmc_2022/pmc_coco/element_detection/val.json',
-        img_prefix='/home/pengyu/Workspace/data/chart_data/pmc_2022/pmc_coco/element_detection/val/',
+        ann_file='/home/csgrad/pyan4/Workspace/data/chart_data/pmc_2022/pmc_coco/element_detection/val.json',
+        img_prefix='/home/csgrad/pyan4/Workspace/data/chart_data/pmc_2022/pmc_coco/element_detection/val/',
         pipeline=train_pipeline),
     val=dict(
         type=dataset_type,
         classes=classes,
-        ann_file='/home/pengyu/Workspace/data/chart_data/pmc_2022/pmc_coco/element_detection/val.json',
-        img_prefix='/home/pengyu/Workspace/data/chart_data/pmc_2022/pmc_coco/element_detection/val/',
+        ann_file='/home/csgrad/pyan4/Workspace/data/chart_data/pmc_2022/pmc_coco/element_detection/val.json',
+        img_prefix='/home/csgrad/pyan4/Workspace/data/chart_data/pmc_2022/pmc_coco/element_detection/val/',
         pipeline=test_pipeline),
     test=dict(
         type=dataset_type,
         classes=classes,
-        ann_file='/home/pengyu/Workspace/data/chart_data/pmc_2022/pmc_coco/element_detection/val.json',
-        img_prefix='/home/pengyu/Workspace/data/chart_data/pmc_2022/pmc_coco/element_detection/val/',
+        ann_file='/home/csgrad/pyan4/Workspace/data/chart_data/pmc_2022/pmc_coco/element_detection/val.json',
+        img_prefix='/home/csgrad/pyan4/Workspace/data/chart_data/pmc_2022/pmc_coco/element_detection/val/',
         pipeline=test_pipeline))
 evaluation = dict(interval=1, metric='bbox')
 

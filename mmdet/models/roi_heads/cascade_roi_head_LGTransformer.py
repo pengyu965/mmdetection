@@ -15,7 +15,7 @@ from .test_mixins import BBoxTestMixin, MaskTestMixin
 
 
 @HEADS.register_module()
-class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
+class CascadeRoIHead_LGTransformer(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
     """Cascade roi head including one bbox head and one mask head.
 
     https://arxiv.org/abs/1712.00726
@@ -29,7 +29,7 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                  mask_roi_extractor=None,
                  mask_head=None,
                  localglobal_fuser=None,
-                 lgf_shared=True,
+                 lgf_shared=False,
                  bbox_encoder = None,
                  bbox_encoder_shared = False,
                  shared_head=None,
@@ -44,7 +44,7 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
 
         self.num_stages = num_stages
         self.stage_loss_weights = stage_loss_weights
-        super(CascadeRoIHead_LGM, self).__init__(
+        super(CascadeRoIHead_LGF, self).__init__(
             bbox_roi_extractor=bbox_roi_extractor,
             bbox_head=bbox_head,
             mask_roi_extractor=mask_roi_extractor,
@@ -55,15 +55,17 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
             pretrained=pretrained,
             init_cfg=init_cfg)
         
-
-        if lgf_shared:
-            self.localglobal_fuser = build_head(localglobal_fuser)
+        if localglobal_fuser:
+            if lgf_shared:
+                self.localglobal_fuser = build_head(localglobal_fuser)
+            else:
+                self.localglobal_fuser = ModuleList()
+                localglobal_fuser_cfgs = [
+                    localglobal_fuser for _ in range(num_stages)]
+                for lgf_cfg in localglobal_fuser_cfgs:
+                    self.localglobal_fuser.append(build_head(lgf_cfg))
         else:
-            self.localglobal_fuser = ModuleList()
-            localglobal_fuser_cfgs = [
-                localglobal_fuser for _ in range(num_stages)]
-            for lgf_cfg in localglobal_fuser_cfgs:
-                self.localglobal_fuser.append(build_head(lgf_cfg))
+            self.localglobal_fuser = None
 
         if bbox_encoder:
             if bbox_encoder_shared:
@@ -177,35 +179,16 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
         bbox_head = self.bbox_head[stage]
         bbox_feats = bbox_roi_extractor(x[:bbox_roi_extractor.num_inputs],
                                         rois)
-        # print("roi typs", type(rois))
-        # print("roi length", len(rois))
-        # print("rois shape", rois.shape)
-        # for i in range(len(rois)):
-        #     print(rois[i])
-        # print("len bbox feats", len(bbox_feats))
-        # print("bbox feats shape", bbox_feats.shape)
-        # print("bbox feats 0, shape", bbox_feats[0].shape)
-        # print("bbox feats shape", bbox_feats.shape)
-        # print("feature pyramid num", len(x))
-        # print("feature pyramid type", type(x))
-        # print("feature pyramid shape each", x[0].shape, x[1].shape)
         # do not support caffe_c4 model anymore
 
-        # Handling shared or not shared LGF through different stage
-        if isinstance(self.localglobal_fuser, ModuleList):
-            localglobal_fuser = self.localglobal_fuser[stage]
-        else:
-            localglobal_fuser = self.localglobal_fuser
-        bbox_feats = localglobal_fuser(x, bbox_feats, num_rois_per_img)
-        # norm_rois = self._rois_norm(rois,image_shapes,num_rois_per_img)
+        if self.localglobal_fuser:
+            # Handling shared or not shared LGF through different stage
+            if isinstance(self.localglobal_fuser, ModuleList):
+                localglobal_fuser = self.localglobal_fuser[stage]
+            else:
+                localglobal_fuser = self.localglobal_fuser
+            bbox_feats = localglobal_fuser(x, bbox_feats, num_rois_per_img)
 
-        # split_rois = rois.split(num_rois_per_img,0)
-        # norm_rois = []
-        # for norm_roi in split_rois:
-        #     norm_roi = norm_roi.detach()
-        #     norm_roi = norm_roi[:,1:]/norm_roi[:,1:].max()
-        #     norm_rois.append(norm_roi)
-        # norm_rois = torch.stack(norm_rois, dim=0)
         if self.bbox_encoder:
             # Handling shared or not shared bbox encoder 
             # through different stage
@@ -333,6 +316,10 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                         gt_labels[j],
                         feats=[lvl_feat[j][None] for lvl_feat in x])
                     sampling_results.append(sampling_result)
+
+                    print("stage:",i)
+                    print(gt_labels[j])
+                    print(sampling_result)
 
             # bbox head forward and loss
             bbox_results = self._bbox_forward_train(i, x, sampling_results,
@@ -725,115 +712,80 @@ class CascadeRoIHead_LGM(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
             return det_bboxes, det_labels, segm_results
 
 @HEADS.register_module()
-class LocalGlobal_Context_Fuser(nn.Module):
-    r'''
-    This is used to merge the local roi feat with global feature maps.
-    It will first, handle the 
-    '''
-    def __init__(self, 
-                 channels=256, 
-                 roi_size=7,
-                 reduced_channels=None,
-                 lg_merge_layer=None) -> None:
-        r'''
-        channels should equal to backbone channel.
-        if reduced_channels = None:
-            output_channel = 2*channel
-        '''
-        super(LocalGlobal_Context_Fuser, self).__init__()
-        
-        self.adaptive_pool = nn.AdaptiveAvgPool2d(roi_size)
-        self.conv_layer = nn.Sequential(
-            nn.Conv2d(channels*5, channels, 3, 1, 1),
-            nn.Conv2d(channels, channels,3, 1, 1),
-            nn.Conv2d(channels, channels,3, 1, 1))
-        
-        fuse_module = ModuleList()
-        fuse_module.append(nn.Identity())
-        if reduced_channels:
-            fuse_module.append(
-                nn.Conv2d(2*channels, reduced_channels, 1))
-        if lg_merge_layer:
-            fuse_module.append(
-                build_head(lg_merge_layer))
-        self.fuse_layer = nn.Sequential(*fuse_module)
-
-    def forward(self, fp, roi_feats, num_rois_per_img):
-        r'''input is feature pyramid'''
-        pooled_fp = []
-        for i in range(len(fp)):
-            pooled_fp.append(self.adaptive_pool(fp[i]))
-        
-        pooled_fp = torch.cat(pooled_fp, dim=1)
-        pooled_fp = self.conv_layer(pooled_fp)
-
-        roi_feats = roi_feats.split(num_rois_per_img, 0)
-
-        img_num = len(num_rois_per_img)
-
-        lg_roi_feats = []
-        for i in range(img_num):
-            img_pooled_fp = pooled_fp[i].unsqueeze(0)
-            img_roi_feats = roi_feats[i]
-            for j in range(len(img_roi_feats)):
-                img_roi_feat = img_roi_feats[j].unsqueeze(0)
-                lg_roi_feats.append(
-                    torch.cat((img_roi_feat, img_pooled_fp), dim=1))
-
-        lg_roi_feats = torch.cat(lg_roi_feats, dim=0)
-        lg_roi_feats = self.fuse_layer(lg_roi_feats)        
-        return lg_roi_feats
-        
-
-@HEADS.register_module()
-class SELayer(BaseModule):
-    """Squeeze-and-Excitation Module.
-
-    Args:
-        channels (int): The input (and output) channels of the SE layer.
-        ratio (int): Squeeze ratio in SELayer, the intermediate channel will be
-            ``int(channels/ratio)``. Default: 16.
-        conv_cfg (None or dict): Config dict for convolution layer.
-            Default: None, which means using conv2d.
-        act_cfg (dict or Sequence[dict]): Config dict for activation layer.
-            If act_cfg is a dict, two activation layers will be configurated
-            by this dict. If act_cfg is a sequence of dicts, the first
-            activation layer will be configurated by the first dict and the
-            second activation layer will be configurated by the second dict.
-            Default: (dict(type='ReLU'), dict(type='Sigmoid'))
-        init_cfg (dict or list[dict], optional): Initialization config dict.
-            Default: None
-    """
+class LGTransformer(nn.Module):
+    """  the full GPT language model, with a context size of block_size """
 
     def __init__(self,
-                 channels,
-                 ratio=16,
-                 conv_cfg=None,
-                 act_cfg=(dict(type='ReLU'), dict(type='Sigmoid')),
-                 init_cfg=None):
-        super(SELayer, self).__init__(init_cfg)
-        if isinstance(act_cfg, dict):
-            act_cfg = (act_cfg, act_cfg)
-        assert len(act_cfg) == 2
-        assert mmcv.is_tuple_of(act_cfg, dict)
-        self.global_avgpool = nn.AdaptiveAvgPool2d(1)
-        self.conv1 = ConvModule(
-            in_channels=channels,
-            out_channels=int(channels / ratio),
-            kernel_size=1,
-            stride=1,
-            conv_cfg=conv_cfg,
-            act_cfg=act_cfg[0])
-        self.conv2 = ConvModule(
-            in_channels=int(channels / ratio),
-            out_channels=channels,
-            kernel_size=1,
-            stride=1,
-            conv_cfg=conv_cfg,
-            act_cfg=act_cfg[1])
+                 n_layer=12,
+                 n_head=8,
+                 n_embd=512,
+                 bbox_cord_dim=4,
+                 bbox_max_num=1024,
+                 embd_pdrop=0.1,
+                 attn_pdrop=0.1):
+        super(LGTransformer, self).__init__()
 
-    def forward(self, x):
-        out = self.global_avgpool(x)
-        out = self.conv1(out)
-        out = self.conv2(out)
-        return x * out
+        # input embedding stem
+        # self.tok_emb = nn.Embedding(vocab_size, n_embd)
+        # self.pos_emb = nn.Parameter(torch.zeros(1, block_size, n_embd))
+        self.bbox_emb_layer = nn.ModuleList()
+        self.bbox_emb_layer.append(nn.Linear(bbox_cord_dim, n_embd))
+        self.bbox_emb_layer.append(nn.Linear(n_embd, n_embd))
+        self.bbox_emb_layer.append(nn.Dropout(embd_pdrop))
+        
+        # transformer 
+        transformer_layer=nn.TransformerEncoderLayer(
+            d_model=n_embd,
+            nhead=n_head, 
+            batch_first=True,
+            dropout=attn_pdrop)
+
+        self.encoder = nn.TransformerEncoder(
+            transformer_layer,
+            num_layers=n_layer,
+            enable_nested_tensor=True, 
+            mask_check=True)
+
+        self.block_size = bbox_max_num
+
+        logger.info("number of parameters: %e", 
+                    sum(p.numel() for p in self.parameters()))
+
+    def forward(self, xs):
+        # Forming the batch. Since the length of each rois is not same.
+        masks = []
+        inputs = []
+        bboxnum_per_batch = []
+        for x in xs:
+            bbox_num, bbox_dim = x.size()
+            assert bbox_num <= self.block_size, \
+                "Cannot forward, model block size is exhausted."
+
+            x=x.unsqueeze(0) # (1,bbox_num,4)
+
+            mask = x.new(1,self.block_size).float().zero_()
+            pad = x.new(1,self.block_size-bbox_num, bbox_dim).float().zero_()
+
+            x = torch.cat((x,pad),dim=1)
+            mask[:,:bbox_num] = 1
+
+            inputs.append(x)
+            masks.append(mask)
+            bboxnum_per_batch.append(bbox_num)
+        
+        input = torch.cat(inputs, dim = 0)
+        mask = torch.cat(masks,dim=0)
+
+        for i, emb_layer in enumerate(self.bbox_emb_layer):
+            input = emb_layer(input)
+            input = input * mask.unsqueeze(-1)
+        
+        # Sending the embedded bbox into transformer.
+        logits = self.encoder(input, src_key_padding_mask=mask.bool())
+
+        out = []
+        for i in range(logits.size(0)):
+            bbox_num = bboxnum_per_batch[i]
+            out.append(logits[i,:bbox_num,:])
+
+        return out

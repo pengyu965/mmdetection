@@ -8,13 +8,6 @@ from mmdet.models.utils import build_linear_layer
 from .bbox_head import BBoxHead
 
 @HEADS.register_module()
-class ConvFCBBoxHead_with_LGF(BBoxHead):
-    r"""This is the self modified bbox head to achieve my previous impl of
-    merged local global features.
-    """
-
-
-@HEADS.register_module()
 class ConvFCBBoxHead(BBoxHead):
     r"""More general bbox head, with shared conv and fc layers and two optional
     separated branches.
@@ -205,7 +198,71 @@ class ConvFCBBoxHead(BBoxHead):
 
 
 @HEADS.register_module()
-class Shared3FCBBoxHead_LGContext(BBoxHead):
+class Shared3FCBBoxHead_with_BboxEncoding(BBoxHead):
+
+    def __init__(self, 
+                 in_channels=256,
+                 fc_out_channels=1024, 
+                 bbox_encoding_dim=512,
+                 *args, **kwargs):
+        super(Shared3FCBBoxHead_with_BboxEncoding, self).__init__(
+            in_channels=in_channels,
+            *args,
+            **kwargs)
+
+        if self.with_avg_pool:
+            self.avg_pool = nn.AvgPool2d(self.roi_feat_size)
+
+        in_channels *= self.roi_feat_area
+        
+        self.shared_fcs1 = nn.Linear(in_channels,fc_out_channels)
+        self.shared_fcs2 = nn.Linear(fc_out_channels+bbox_encoding_dim,
+                                     fc_out_channels)
+        self.shared_fcs3 = nn.Linear(fc_out_channels,fc_out_channels)
+
+        self.relu = nn.ReLU(inplace=True)
+
+        # reconstruct fc_cls and fc_reg since input channels are changed
+        if self.with_cls:
+            if self.custom_cls_channels:
+                cls_channels = self.loss_cls.get_cls_channels(self.num_classes)
+            else:
+                cls_channels = self.num_classes + 1
+            self.fc_cls = build_linear_layer(
+                self.cls_predictor_cfg,
+                in_features=fc_out_channels,
+                out_features=cls_channels)
+        if self.with_reg:
+            out_dim_reg = (4 if self.reg_class_agnostic else 4 *
+                           self.num_classes)
+            self.fc_reg = build_linear_layer(
+                self.reg_predictor_cfg,
+                in_features=fc_out_channels,
+                out_features=out_dim_reg)
+
+    def forward(self, x, bbox_encoding):
+        # shared part
+
+        if self.with_avg_pool:
+            x = self.avg_pool(x)
+
+        x = x.flatten(1)
+
+        x = self.relu(self.shared_fcs1(x))
+        x = torch.cat((x, bbox_encoding), dim=-1)
+        x = self.relu(self.shared_fcs2(x))
+        x = self.relu(self.shared_fcs3(x))
+
+        # separate branches
+        x_cls = x
+        x_reg = x
+
+        cls_score = self.fc_cls(x_cls) if self.with_cls else None
+        bbox_pred = self.fc_reg(x_reg) if self.with_reg else None
+        return cls_score, bbox_pred
+
+@HEADS.register_module()
+class BBoxHead_LGF_BBEncoding(BBoxHead):
 
     def __init__(self, 
                  in_channels=256,

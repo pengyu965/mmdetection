@@ -23,7 +23,7 @@ from .sparse_roi_head import SparseRoIHead
 from .standard_roi_head import StandardRoIHead
 from .trident_roi_head import TridentRoIHead
 
-from .cascade_roi_head_LGM import (CascadeRoIHead_LGM, 
+from .cascade_roi_head_LGF import (CascadeRoIHead_LGF, 
                                    LocalGlobal_Context_Fuser, SELayer)
 from .bbox_encoding_transformer import BboxEncoder
 
@@ -37,6 +37,6 @@ __all__ = [
     'SingleRoIExtractor', 'PISARoIHead', 'PointRendRoIHead', 'MaskPointHead',
     'CoarseMaskHead', 'DynamicRoIHead', 'SparseRoIHead', 'TridentRoIHead',
     'SCNetRoIHead', 'SCNetMaskHead', 'SCNetSemanticHead', 'SCNetBBoxHead',
-    'FeatureRelayHead', 'GlobalContextHead', 'CascadeRoIHead_LGM', 
+    'FeatureRelayHead', 'GlobalContextHead', 'CascadeRoIHead_LGF', 
     "LocalGlobal_Context_Fuser", "SELayer", "BboxEncoder"
 ]
