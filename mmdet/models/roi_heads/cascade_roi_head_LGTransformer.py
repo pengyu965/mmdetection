@@ -15,7 +15,7 @@ from .test_mixins import BBoxTestMixin, MaskTestMixin
 
 
 @HEADS.register_module()
-class CascadeRoIHead_LGTransformer(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
+class CascadeRoIHead_LGTrans(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
     """Cascade roi head including one bbox head and one mask head.
 
     https://arxiv.org/abs/1712.00726
@@ -44,7 +44,7 @@ class CascadeRoIHead_LGTransformer(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
 
         self.num_stages = num_stages
         self.stage_loss_weights = stage_loss_weights
-        super(CascadeRoIHead_LGF, self).__init__(
+        super(CascadeRoIHead_LGTrans, self).__init__(
             bbox_roi_extractor=bbox_roi_extractor,
             bbox_head=bbox_head,
             mask_roi_extractor=mask_roi_extractor,
@@ -319,7 +319,10 @@ class CascadeRoIHead_LGTransformer(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
 
                     print("stage:",i)
                     print(gt_labels[j])
+                    print(len(gt_labels[j]))
                     print(sampling_result)
+                    print(len(sampling_result.bboxes))
+                    print(sampling_result.pos_gt_labels)
 
             # bbox head forward and loss
             bbox_results = self._bbox_forward_train(i, x, sampling_results,

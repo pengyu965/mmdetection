@@ -25,6 +25,7 @@ from .trident_roi_head import TridentRoIHead
 
 from .cascade_roi_head_LGF import (CascadeRoIHead_LGF, 
                                    LocalGlobal_Context_Fuser, SELayer)
+from .cascade_roi_head_LGTransformer import (CascadeRoIHead_LGTrans,)
 from .bbox_encoding_transformer import BboxEncoder
 
 __all__ = [
